@@ -14,7 +14,9 @@
       "Bash(python -m venv:*)",
       "Bash(venv/Scripts/python.exe -m pip:*)",
       "Bash(venv/Scripts/unat.exe:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)"
     ]
   }
 }

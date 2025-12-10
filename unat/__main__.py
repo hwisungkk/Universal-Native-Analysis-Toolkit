@@ -226,6 +226,182 @@ def install(ctx, apk_path, serial, reinstall):
         sys.exit(1)
 
 
+@cli.command()
+@click.argument('package_name')
+@click.option('-s', '--serial', help='Specific device serial')
+@click.option('--spawn', is_flag=True, help='Spawn the app instead of attaching')
+@click.option('--package-only', is_flag=True, default=True, help='Only enumerate app package classes (default)')
+@click.option('--filter-obfuscated', is_flag=True, help='Only show obfuscated classes')
+@click.option('--no-methods', is_flag=True, help='Skip method enumeration (faster)')
+@click.option('-o', '--output', help='Output file (JSON format)')
+@click.option('--max-classes', type=int, help='Maximum number of classes to process')
+@click.pass_context
+def discover(ctx, package_name, serial, spawn, package_only, filter_obfuscated, no_methods, output, max_classes):
+    """
+    Discover Java classes and methods in a running application
+
+    Uses Frida to dynamically enumerate loaded Java classes and their methods.
+    Useful for understanding app structure and finding obfuscated code.
+
+    Example:
+        unat discover com.example.app
+        unat discover com.example.app --filter-obfuscated
+        unat discover com.example.app --spawn --no-methods
+    """
+    try:
+        from unat.core.device_manager import DeviceManager
+        from unat.discovery.java_discovery import discover_java_classes
+
+        if RICH_AVAILABLE:
+            console.print(f"\n[bold]Java Discovery:[/bold] {package_name}\n")
+        else:
+            print(f"\nJava Discovery: {package_name}\n")
+
+        # Connect to device
+        manager = DeviceManager()
+        if not manager.connect(serial):
+            if RICH_AVAILABLE:
+                console.print("[bold red]Failed to connect to device[/bold red]")
+            else:
+                print("Failed to connect to device")
+            sys.exit(1)
+
+        # Get Frida device
+        frida_device = manager.get_frida_device()
+        if not frida_device:
+            if RICH_AVAILABLE:
+                console.print("[bold red]Frida not available on device[/bold red]")
+            else:
+                print("Frida not available on device")
+            sys.exit(1)
+
+        # Perform discovery
+        if RICH_AVAILABLE:
+            console.print("[yellow]Starting discovery...[/yellow]")
+        else:
+            print("Starting discovery...")
+
+        result = discover_java_classes(
+            frida_device=frida_device,
+            package_name=package_name,
+            spawn=spawn,
+            package_only=package_only,
+            obfuscated_only=filter_obfuscated,
+            enumerate_methods=not no_methods
+        )
+
+        if not result:
+            if RICH_AVAILABLE:
+                console.print("[bold red]Discovery failed[/bold red]")
+            else:
+                print("Discovery failed")
+            sys.exit(1)
+
+        # Display results
+        if RICH_AVAILABLE:
+            _display_discovery_results_rich(result, max_classes)
+        else:
+            _display_discovery_results_plain(result, max_classes)
+
+        # Save to file if requested
+        if output:
+            import json
+            output_data = {
+                'package_name': result.package_name,
+                'total_classes': result.total_classes,
+                'total_methods': result.total_methods,
+                'obfuscated_classes': result.obfuscated_classes,
+                'classes': [
+                    {
+                        'name': c.name,
+                        'package': c.package,
+                        'is_obfuscated': c.is_obfuscated,
+                        'methods': c.methods[:10] if c.methods else []  # Limit methods in JSON
+                    }
+                    for c in (result.classes[:max_classes] if max_classes else result.classes)
+                ]
+            }
+
+            with open(output, 'w', encoding='utf-8') as f:
+                json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+            if RICH_AVAILABLE:
+                console.print(f"\n[green]Results saved to:[/green] {output}")
+            else:
+                print(f"\nResults saved to: {output}")
+
+    except Exception as e:
+        if RICH_AVAILABLE:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+        else:
+            print(f"Error: {e}")
+        import traceback
+        if ctx.obj.get('verbose'):
+            traceback.print_exc()
+        sys.exit(1)
+
+
+def _display_discovery_results_rich(result, max_classes=None):
+    """Display discovery results using Rich formatting"""
+    # Summary panel
+    summary = f"""[cyan]Package:[/cyan] {result.package_name}
+[cyan]Total Classes:[/cyan] {result.total_classes}
+[cyan]Total Methods:[/cyan] {result.total_methods}
+[cyan]Obfuscated Classes:[/cyan] {result.obfuscated_classes} ({result.obfuscated_classes / max(result.total_classes, 1) * 100:.1f}%)"""
+
+    console.print(Panel(summary, title="[bold]Discovery Summary[/bold]", border_style="green"))
+
+    # Classes table
+    classes_to_show = result.classes[:max_classes] if max_classes else result.classes[:50]
+
+    if classes_to_show:
+        table = Table(title=f"Java Classes (showing {len(classes_to_show)} of {result.total_classes})")
+        table.add_column("Class Name", style="cyan", no_wrap=False)
+        table.add_column("Methods", style="magenta", justify="right")
+        table.add_column("Obfuscated", style="yellow", justify="center")
+
+        for class_info in classes_to_show:
+            obf_marker = "✓" if class_info.is_obfuscated else ""
+            method_count = len(class_info.methods) if class_info.methods else 0
+
+            # Color code class name
+            class_name = class_info.name
+            if class_info.is_obfuscated:
+                class_name = f"[red]{class_name}[/red]"
+
+            table.add_row(
+                class_name,
+                str(method_count),
+                obf_marker
+            )
+
+        console.print("\n")
+        console.print(table)
+
+        # Show some method examples
+        if classes_to_show and classes_to_show[0].methods:
+            console.print(f"\n[bold cyan]Example Methods from {classes_to_show[0].name}:[/bold cyan]")
+            for method in classes_to_show[0].methods[:5]:
+                console.print(f"  • {method}")
+
+
+def _display_discovery_results_plain(result, max_classes=None):
+    """Display discovery results in plain text"""
+    print("\n=== Discovery Summary ===")
+    print(f"Package: {result.package_name}")
+    print(f"Total Classes: {result.total_classes}")
+    print(f"Total Methods: {result.total_methods}")
+    print(f"Obfuscated Classes: {result.obfuscated_classes}")
+
+    classes_to_show = result.classes[:max_classes] if max_classes else result.classes[:50]
+
+    print(f"\n=== Classes (showing {len(classes_to_show)} of {result.total_classes}) ===")
+    for class_info in classes_to_show:
+        obf_marker = " [OBFUSCATED]" if class_info.is_obfuscated else ""
+        method_count = len(class_info.methods) if class_info.methods else 0
+        print(f"{class_info.name} ({method_count} methods){obf_marker}")
+
+
 def _display_apk_info_rich(info, handler):
     """Display APK information using Rich formatting"""
     # Basic info panel

@@ -8,6 +8,77 @@
 
 ---
 
+## 2024-12-10 - Phase 2-1: Java Discovery 구현
+
+### 작업 내용
+Discovery 모듈의 첫 번째 구현: Java 클래스 및 메서드 탐색 기능
+
+### 완료 항목
+1. **Java Discovery 모듈**
+   - `unat/discovery/java_discovery.py` (약 400줄)
+     - JavaDiscovery 클래스 구현
+     - Frida 세션 연결 (attach/spawn)
+     - Java 클래스 열거 (Java.enumerateLoadedClasses)
+     - 메서드 열거 (getDeclaredMethods)
+     - 난독화 패턴 인식
+     - 필터링 기능 (패키지, 난독화, 시스템 클래스)
+     - JavaClassInfo, JavaDiscoveryResult 데이터 클래스
+
+2. **Frida 스크립트 템플릿**
+   - `frida_scripts/templates/enumerate_classes.js`
+     - 로드된 Java 클래스 전체 열거
+     - 결과를 Python으로 전송
+
+   - `frida_scripts/templates/enumerate_methods.js`
+     - 특정 클래스의 메서드/생성자 열거
+     - 메서드 시그니처 추출
+
+3. **CLI 통합**
+   - `unat discover` 명령어 추가
+     - `--spawn`: 앱 실행 및 attach
+     - `--package-only`: 앱 패키지 클래스만 (기본값)
+     - `--filter-obfuscated`: 난독화된 클래스만 표시
+     - `--no-methods`: 메서드 열거 스킵 (빠른 스캔)
+     - `-o, --output`: JSON 형식 결과 저장
+     - `--max-classes`: 처리할 최대 클래스 수
+
+   - Rich 테이블로 결과 표시
+     - 클래스 이름, 메서드 수, 난독화 여부
+     - 난독화된 클래스는 빨간색 표시
+     - 예제 메서드 표시
+
+### 주요 기능
+- **난독화 탐지 패턴**
+  - 단일 문자 클래스명 (a, b, c)
+  - 짧은 클래스명 (ab, o0, l1l)
+  - O0O, III 같은 혼동 패턴
+  - 짧은 패키지 이름
+
+- **성능 최적화**
+  - 메서드 열거 선택적 스킵
+  - 최대 클래스 수 제한
+  - 진행 상황 로깅
+
+### 테스트 완료
+- ✅ `unat discover --help` - 도움말 출력 정상
+- ✅ CLI 명령어 구조 확인
+- ✅ 문법 오류 수정
+
+### 다음 작업
+- Native Discovery 구현 (.so 파일 분석)
+- JNI Discovery 구현
+- 실제 APK로 테스트 (InsecureShop, 난독화된 앱)
+
+### 작업 시간
+약 1.5시간 (설계 + 구현 + 테스트)
+
+### 참고 사항
+- Frida의 Java.enumerateLoadedClasses() API 사용
+- 인라인 스크립트 fallback 제공 (템플릿 파일 없어도 작동)
+- 난독화 탐지는 휴리스틱 기반 (100% 정확하지 않음)
+
+---
+
 ## 2024-12-10 - Phase 1 완료
 
 ### 작업 내용
