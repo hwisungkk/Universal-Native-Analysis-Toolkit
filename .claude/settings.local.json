@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(New-Item -ItemType File -Path \"unat/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/core/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/discovery/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/hooking/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/evasion/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/testing/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/analysis/__init__.py\" -Force)",
+      "Bash(New-Item -ItemType File -Path \"unat/reporting/__init__.py\" -Force)",
+      "Bash(touch:*)",
+      "Bash(python -m venv:*)",
+      "Bash(venv/Scripts/python.exe -m pip:*)",
+      "Bash(venv/Scripts/unat.exe:*)",
+      "Bash(tree:*)"
+    ]
+  }
+}

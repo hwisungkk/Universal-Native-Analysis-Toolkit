@@ -1,0 +1,30 @@
+# Core dependencies for UNAT
+androguard>=3.4.0
+frida>=16.0.0
+frida-tools>=12.0.0
+
+# CLI and UI
+click>=8.1.0
+rich>=13.0.0
+colorama>=0.4.6
+
+# Configuration and data handling
+pyyaml>=6.0
+lxml>=4.9.0
+
+# ADB integration
+adb-shell>=0.4.0
+
+# Network and utilities
+requests>=2.28.0
+urllib3>=1.26.0
+
+# Code analysis
+capstone>=5.0.0
+keystone-engine>=0.9.2
+
+# Development dependencies (optional)
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0

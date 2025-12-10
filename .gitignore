@@ -205,3 +205,34 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ===== UNAT Project Specific =====
+
+# Analysis output
+output/
+*.apk
+*.dex
+
+# User configurations (keep default, ignore user configs)
+config/user_config.yaml
+config/local_*.yaml
+
+# Frida scripts output
+frida_scripts/compiled/
+*.pyc.js
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary analysis files
+*.tmp
+*.temp
+*.cache

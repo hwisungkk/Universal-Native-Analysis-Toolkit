@@ -1,0 +1,121 @@
+# UNAT Default Configuration
+# Universal Native Analysis Toolkit
+
+# Application settings
+app:
+  name: "UNAT"
+  version: "0.1.0"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  output_dir: "output"
+
+# ADB/Device settings
+device:
+  adb_path: "adb"  # Path to adb executable, or "adb" to use system PATH
+  default_device: null  # Leave null for auto-detection, or specify device serial
+  connection_timeout: 10  # seconds
+  command_timeout: 30  # seconds
+
+# Frida settings
+frida:
+  version: "latest"
+  server_port: 27042
+  host: "127.0.0.1"
+  spawn_timeout: 10  # seconds
+  script_timeout: 30  # seconds
+  enable_jit: true
+  enable_debugger: false
+  debugger_port: 5858
+
+# APK Analysis settings
+apk:
+  extract_dir: "output/extracted"
+  analyze_manifest: true
+  analyze_resources: true
+  analyze_native_libs: true
+  analyze_dex: true
+  decompile_timeout: 300  # seconds
+
+# Discovery settings
+discovery:
+  max_depth: 10  # Maximum class hierarchy depth
+  include_system_classes: false
+  timeout: 60  # seconds per module
+  java:
+    scan_methods: true
+    scan_fields: true
+    include_constructors: true
+  native:
+    scan_exports: true
+    scan_imports: true
+    scan_strings: true
+  jni:
+    trace_registration: true
+    hook_common_methods: true
+
+# Hooking settings
+hooking:
+  auto_attach: false
+  hook_delay: 0.5  # seconds
+  backtrace_limit: 10
+  max_hooks: 1000
+  templates_dir: "frida_scripts/templates"
+
+# Evasion detection settings
+evasion:
+  detect_frida: true
+  detect_root: true
+  detect_emulator: true
+  detect_debugger: true
+  auto_bypass: false  # Automatically attempt to bypass detection
+
+# Testing/Fuzzing settings
+testing:
+  max_iterations: 1000
+  timeout_per_test: 5  # seconds
+  crash_detection: true
+  memory_monitoring: true
+  fuzzing:
+    mutation_rate: 0.3
+    seed_corpus: null
+
+# Analysis settings
+analysis:
+  crypto:
+    detect_hardcoded_keys: true
+    detect_weak_algorithms: true
+  behavior:
+    track_network: true
+    track_file_operations: true
+    track_database: true
+    track_ipc: true
+  obfuscation:
+    detect_packing: true
+    detect_string_encryption: true
+
+# Reporting settings
+reporting:
+  format: "html"  # html, json, markdown, pdf
+  include_screenshots: true
+  include_logs: true
+  verbosity: "normal"  # minimal, normal, detailed
+  output_file: "output/report"
+
+# Performance settings
+performance:
+  max_workers: 4  # For parallel processing
+  memory_limit_mb: 2048
+  cache_enabled: true
+  cache_dir: ".cache"
+
+# Logging settings
+logging:
+  console:
+    enabled: true
+    level: "INFO"
+    colored: true
+  file:
+    enabled: true
+    level: "DEBUG"
+    path: "output/unat.log"
+    max_size_mb: 10
+    backup_count: 5
