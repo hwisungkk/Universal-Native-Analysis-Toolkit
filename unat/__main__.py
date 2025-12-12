@@ -723,6 +723,234 @@ def _display_device_info_rich(manager):
     console.print(status_table)
 
 
+@cli.command()
+@click.argument('package_name')
+@click.option('-s', '--serial', help='Specific device serial')
+@click.option('--spawn', is_flag=True, help='Spawn the app instead of attaching')
+@click.option('--method', help='Java method to hook (format: com.example.Class.methodName)')
+@click.option('--native', help='Native function to hook')
+@click.option('--module', help='Module name for native hook (e.g., libnative.so)')
+@click.option('--template', type=click.Path(exists=True), help='Custom Frida script template')
+@click.option('--no-args', is_flag=True, help='Disable argument logging')
+@click.option('--no-return', is_flag=True, help='Disable return value logging')
+@click.option('--backtrace', is_flag=True, help='Enable backtrace logging')
+@click.option('--registers', is_flag=True, help='Enable register logging (native only)')
+@click.option('-d', '--duration', type=int, help='Hook duration in seconds (default: indefinite)')
+@click.option('-o', '--output', help='Output file for hook logs (JSON format)')
+@click.pass_context
+def hook(ctx, package_name, serial, spawn, method, native, module, template, no_args, no_return, backtrace, registers, duration, output):
+    """
+    Hook Java methods or native functions in a running application
+
+    This command uses Frida to intercept function calls and log their parameters,
+    return values, and execution context in real-time.
+
+    Java Hooking:
+        Hook Java methods by specifying the full method path:
+
+        Examples:
+            unat hook com.example.app --method com.example.MyClass.myMethod
+            unat hook com.example.app --method android.telephony.TelephonyManager.getDeviceId
+            unat hook com.example.app --method com.example.crypto.AES.encrypt --backtrace
+
+    Native Hooking:
+        Hook native functions by name or address:
+
+        Examples:
+            unat hook com.example.app --native strcmp
+            unat hook com.example.app --native open --module libc.so
+            unat hook com.example.app --native 0x12345678
+            unat hook com.example.app --native SSL_write --registers
+
+    Custom Scripts:
+        Use a custom Frida script template:
+
+        Examples:
+            unat hook com.example.app --template my_hook.js
+
+    Options:
+        --spawn: Spawn the app before hooking (useful if app isn't running)
+        --backtrace: Log call stack for each hook
+        --registers: Log CPU registers (native hooks only)
+        --no-args: Disable argument logging (faster performance)
+        --no-return: Disable return value logging
+        -d: Set duration limit (e.g., -d 60 for 60 seconds)
+        -o: Save hook logs to JSON file
+    """
+    try:
+        from unat.core.device_manager import DeviceManager
+        from unat.hooking import (
+            create_hook_session,
+            HookTemplateManager,
+            HookConfig,
+            HookEvent
+        )
+
+        # Validate input
+        if not method and not native and not template:
+            if RICH_AVAILABLE:
+                console.print("[bold red]Error:[/bold red] Must specify --method, --native, or --template")
+            else:
+                print("Error: Must specify --method, --native, or --template")
+            sys.exit(1)
+
+        if RICH_AVAILABLE:
+            console.print(f"\n[bold]Hooking Session:[/bold] {package_name}\n")
+        else:
+            print(f"\nHooking Session: {package_name}\n")
+
+        # Connect to device
+        manager = DeviceManager()
+        if not manager.connect(serial):
+            if RICH_AVAILABLE:
+                console.print("[bold red]Failed to connect to device[/bold red]")
+            else:
+                print("Failed to connect to device")
+            sys.exit(1)
+
+        # Get Frida device
+        frida_device = manager.get_frida_device()
+        if not frida_device:
+            if RICH_AVAILABLE:
+                console.print("[bold red]Frida not available on device[/bold red]")
+            else:
+                print("Frida not available on device")
+            sys.exit(1)
+
+        # Create hooking session
+        if RICH_AVAILABLE:
+            console.print("[yellow]Creating hooking session...[/yellow]")
+        else:
+            print("Creating hooking session...")
+
+        engine = create_hook_session(frida_device, package_name, spawn=spawn)
+        if not engine:
+            if RICH_AVAILABLE:
+                console.print("[bold red]Failed to attach to process[/bold red]")
+            else:
+                print("Failed to attach to process")
+            sys.exit(1)
+
+        # Setup output file if requested
+        hook_logs = []
+        if output:
+            def save_to_file(event: HookEvent):
+                hook_logs.append({
+                    'timestamp': event.timestamp,
+                    'thread_id': event.thread_id,
+                    'type': event.event_type,
+                    'data': event.data
+                })
+            engine.add_message_handler(save_to_file)
+
+        # Generate and load script
+        script_code = None
+        template_mgr = HookTemplateManager()
+
+        if template:
+            # Custom template
+            if RICH_AVAILABLE:
+                console.print(f"[cyan]Loading custom template:[/cyan] {template}")
+            else:
+                print(f"Loading custom template: {template}")
+            script_code = template_mgr.load_custom_template(template)
+
+        elif method:
+            # Java method hook
+            # Parse method (format: com.example.Class.methodName)
+            parts = method.rsplit('.', 1)
+            if len(parts) != 2:
+                if RICH_AVAILABLE:
+                    console.print("[bold red]Error:[/bold red] Invalid method format. Use: com.example.Class.methodName")
+                else:
+                    print("Error: Invalid method format. Use: com.example.Class.methodName")
+                sys.exit(1)
+
+            class_name, method_name = parts
+
+            if RICH_AVAILABLE:
+                console.print(f"[cyan]Hooking Java method:[/cyan] {class_name}.{method_name}")
+            else:
+                print(f"Hooking Java method: {class_name}.{method_name}")
+
+            config = HookConfig(
+                class_name=class_name,
+                method_name=method_name,
+                log_args=not no_args,
+                log_return=not no_return,
+                log_backtrace=backtrace
+            )
+            script_code = template_mgr.generate_java_hook(config)
+
+        elif native:
+            # Native function hook
+            if RICH_AVAILABLE:
+                console.print(f"[cyan]Hooking native function:[/cyan] {native}")
+            else:
+                print(f"Hooking native function: {native}")
+
+            config = HookConfig(
+                function_name=native,
+                module_name=module,
+                log_args=not no_args,
+                log_return=not no_return,
+                log_backtrace=backtrace,
+                log_registers=registers
+            )
+            script_code = template_mgr.generate_native_hook(config)
+
+        if not script_code:
+            if RICH_AVAILABLE:
+                console.print("[bold red]Failed to generate hook script[/bold red]")
+            else:
+                print("Failed to generate hook script")
+            sys.exit(1)
+
+        # Load script
+        if not engine.load_script(script_code, "main_hook"):
+            if RICH_AVAILABLE:
+                console.print("[bold red]Failed to load hook script[/bold red]")
+            else:
+                print("Failed to load hook script")
+            sys.exit(1)
+
+        # Run hooking session
+        if RICH_AVAILABLE:
+            console.print("\n[bold green]Hooking active![/bold green] Press Ctrl+C to stop.\n")
+        else:
+            print("\nHooking active! Press Ctrl+C to stop.\n")
+
+        engine.run(duration=duration)
+
+        # Save logs if requested
+        if output and hook_logs:
+            import json
+            with open(output, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'package': package_name,
+                    'stats': engine.get_stats(),
+                    'hooks': hook_logs
+                }, f, indent=2, ensure_ascii=False)
+
+            if RICH_AVAILABLE:
+                console.print(f"\n[green]Hook logs saved to:[/green] {output}")
+            else:
+                print(f"\nHook logs saved to: {output}")
+
+        # Cleanup
+        engine.detach()
+
+    except Exception as e:
+        if RICH_AVAILABLE:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+        else:
+            print(f"Error: {e}")
+        import traceback
+        if ctx.obj.get('verbose'):
+            traceback.print_exc()
+        sys.exit(1)
+
+
 def main():
     """Main entry point"""
     try:
