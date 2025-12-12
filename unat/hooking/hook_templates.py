@@ -1,7 +1,34 @@
 #!/usr/bin/env python3
 """
-Hook Templates Module
-Manages Frida script templates and dynamic script generation
+Hook Templates Module - Frida 스크립트 템플릿 관리 모듈
+
+Frida 스크립트 템플릿을 로드하고 동적으로 변수 치환하여 후킹 스크립트를 생성합니다.
+
+## 구현 방식:
+1. **템플릿 파일 관리**: frida_scripts/templates/ 디렉토리에서 .js 파일 로드
+2. **변수 치환**: 템플릿 내 플레이스홀더를 실제 값으로 대체
+3. **캐싱**: 한 번 로드한 템플릿은 메모리에 캐싱
+4. **타입별 생성기**: Java, Native, JNI 각각의 생성 함수
+
+## 템플릿 변수 예시:
+### Java Hook:
+- CLASS_NAME: com.example.MainActivity
+- METHOD_NAME: onCreate
+- OVERLOAD_INDEX: -1 (모든 오버로드) 또는 0, 1, 2...
+- LOG_ARGS, LOG_RETURN, LOG_BACKTRACE: true/false
+
+### Native Hook:
+- MODULE_NAME: libnative-lib.so 또는 null
+- FUNCTION_NAME: decrypt
+- LOG_ARGS, LOG_RETURN, LOG_REGISTERS, LOG_BACKTRACE: true/false
+- ARG_COUNT: 4 (로깅할 인자 개수)
+
+## 개선 예정:
+- TODO: 템플릿 문법 검증 (Jinja2 스타일 등)
+- TODO: 조건부 블록 (if-else 템플릿 문법)
+- TODO: 템플릿 상속 (base 템플릿 + 확장)
+- TODO: 커스텀 필터 함수 (값 변환)
+- TODO: 템플릿 버전 관리
 """
 
 import logging
@@ -12,7 +39,33 @@ from dataclasses import dataclass
 
 @dataclass
 class HookConfig:
-    """Configuration for hooking"""
+    """
+    후킹 설정을 저장하는 데이터 클래스
+
+    ## Java 후킹 설정:
+    - class_name: 클래스 이름 (예: com.example.MainActivity)
+    - method_name: 메서드 이름 (예: onCreate)
+    - overload_index: 오버로드 인덱스
+      - -1: 모든 오버로드 후킹
+      - 0, 1, 2...: 특정 오버로드만 후킹
+
+    ## Native 후킹 설정:
+    - module_name: 모듈 이름 (예: libnative-lib.so)
+      - None이면 모든 모듈 검색
+    - function_name: 함수 이름 (예: decrypt)
+    - function_address: 함수 주소 (예: "0x12345")
+      - 설정 시 function_name 무시
+
+    ## 로깅 옵션:
+    - log_args: 인자 로깅 (기본: True)
+    - log_return: 리턴값 로깅 (기본: True)
+    - log_backtrace: 백트레이스 로깅 (기본: False)
+    - log_registers: 레지스터 로깅 (Native 전용, 기본: False)
+
+    ## Native 전용:
+    - arg_count: 로깅할 인자 개수 (기본: 4)
+      - ARM64: x0-x3, ARM: r0-r3 등
+    """
     # Java hooking
     class_name: Optional[str] = None
     method_name: Optional[str] = None
@@ -35,8 +88,33 @@ class HookConfig:
 
 class HookTemplateManager:
     """
-    Manages Frida script templates
-    Loads templates and performs variable substitution
+    Frida 스크립트 템플릿 관리자
+
+    ## 주요 기능:
+    1. **템플릿 로드**: .js 템플릿 파일 읽기 및 캐싱
+    2. **변수 치환**: 플레이스홀더를 실제 값으로 대체
+    3. **스크립트 생성**: Java/Native 후킹 스크립트 동적 생성
+
+    ## 템플릿 치환 방식:
+    간단한 문자열 대체 (str.replace)
+    ```javascript
+    // 템플릿 (java_hook.js)
+    var clazz = Java.use("CLASS_NAME");
+    clazz.METHOD_NAME.overload(...).implementation = function() { ... };
+
+    // 치환 후
+    var clazz = Java.use("com.example.MainActivity");
+    clazz.onCreate.overload(...).implementation = function() { ... };
+    ```
+
+    ## 캐싱:
+    - 파일 I/O 최소화를 위해 메모리 캐싱
+    - clear_cache()로 캐시 무효화 가능
+
+    ## TODO:
+    - Jinja2 같은 템플릿 엔진 도입 (조건문, 반복문)
+    - 사용자 정의 템플릿 디렉토리 지원
+    - 템플릿 핫 리로드 (파일 변경 감지)
     """
 
     TEMPLATE_DIR = Path(__file__).parent.parent.parent / "frida_scripts" / "templates"
@@ -108,13 +186,41 @@ class HookTemplateManager:
 
     def generate_java_hook(self, config: HookConfig) -> Optional[str]:
         """
-        Generate Java method hook script
+        Java 메서드 후킹 스크립트 생성
 
         Args:
-            config: Hook configuration
+            config: 후킹 설정
 
         Returns:
-            Optional[str]: Generated script or None if failed
+            Optional[str]: 생성된 스크립트 또는 실패 시 None
+
+        ## 동작 과정:
+        1. 필수 파라미터 검증 (class_name, method_name)
+        2. java_hook.js 템플릿 로드
+        3. 변수 치환 딕셔너리 구성
+        4. str.replace()로 플레이스홀더 대체
+
+        ## 치환 변수:
+        - CLASS_NAME: Java 클래스 전체 경로
+        - METHOD_NAME: 메서드 이름
+        - OVERLOAD_INDEX: -1 (전체) 또는 특정 인덱스
+        - LOG_ARGS, LOG_RETURN, LOG_BACKTRACE: boolean
+
+        ## 예시:
+        ```python
+        config = HookConfig(
+            class_name="com.example.MainActivity",
+            method_name="onCreate",
+            overload_index=-1,  # 모든 onCreate 후킹
+            log_backtrace=True  # 스택 트레이스 출력
+        )
+        script = manager.generate_java_hook(config)
+        ```
+
+        ## TODO:
+        - 파라미터 타입 자동 추론 (Reflection 활용)
+        - 리턴값 수정 기능 (replace mode)
+        - 조건부 후킹 (특정 인자 값일 때만)
         """
         if not config.class_name or not config.method_name:
             self.logger.error("class_name and method_name are required for Java hook")
@@ -124,7 +230,7 @@ class HookTemplateManager:
         if not template:
             return None
 
-        # Replace template variables
+        # Replace template variables (플레이스홀더를 실제 값으로 치환)
         replacements = {
             'CLASS_NAME': config.class_name,
             'METHOD_NAME': config.method_name,

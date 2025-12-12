@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
 Java Discovery Module
-Discovers Java classes and methods in Android applications using Frida
+Frida를 사용하여 Android 앱의 Java 클래스 및 메서드를 동적으로 탐색
+
+주요 기능:
+- 로드된 Java 클래스 실시간 열거
+- 메서드 시그니처 추출
+- 난독화 패턴 자동 감지
+- 패키지 필터링
+
+구현 방식:
+- Frida의 Java.enumerateLoadedClasses() API 사용
+- JavaScript 스크립트를 타겟 프로세스에 주입
+- 런타임에 클래스 목록 수집 및 분석
 """
 
 import logging
@@ -20,17 +31,30 @@ except ImportError:
 
 @dataclass
 class JavaClassInfo:
-    """Data class to store Java class information"""
+    """
+    Java 클래스 정보를 저장하는 데이터 클래스
+
+    Attributes:
+        name: 전체 클래스 이름 (예: com.example.MyClass)
+        methods: 메서드 시그니처 목록
+        fields: 필드 목록 (TODO: 아직 미구현)
+        is_obfuscated: 난독화 여부 (휴리스틱 기반 추정)
+        package: 패키지 이름
+    """
     name: str
     methods: List[str] = field(default_factory=list)
-    fields: List[str] = field(default_factory=list)
+    fields: List[str] = field(default_factory=list)  # TODO: 필드 정보 추출 미구현
     is_obfuscated: bool = False
     package: str = ""
 
 
 @dataclass
 class JavaDiscoveryResult:
-    """Data class to store discovery results"""
+    """
+    Discovery 결과를 저장하는 데이터 클래스
+
+    전체 탐색 결과의 통계와 상세 정보를 포함
+    """
     package_name: str
     total_classes: int = 0
     total_methods: int = 0
@@ -40,20 +64,32 @@ class JavaDiscoveryResult:
 
 class JavaDiscovery:
     """
-    Java Discovery for enumerating Java classes and methods
-    Uses Frida to dynamically inspect loaded classes
+    Java 클래스 및 메서드 탐색 엔진
+
+    동작 방식:
+    1. Frida를 사용하여 타겟 앱 프로세스에 attach
+    2. JavaScript 스크립트를 주입하여 Java.enumerateLoadedClasses() 실행
+    3. 로드된 모든 클래스 목록을 수집
+    4. 각 클래스의 메서드를 getDeclaredMethods()로 열거
+    5. 난독화 패턴 매칭으로 난독화 여부 판단
+
+    개선 필요 사항:
+    - TODO: 메서드 열거 시 병렬 처리로 성능 개선
+    - TODO: 클래스 상속 관계 추적
+    - TODO: 어노테이션 정보 추출
+    - TODO: 필드 정보 추출
     """
 
     def __init__(self, frida_device, package_name: str):
         """
-        Initialize Java Discovery
+        Java Discovery 초기화
 
         Args:
-            frida_device: Frida device object
-            package_name: Target package name
+            frida_device: Frida 디바이스 객체
+            package_name: 타겟 앱 패키지 이름
 
         Raises:
-            ImportError: If Frida is not available
+            ImportError: Frida가 설치되지 않은 경우
         """
         if not FRIDA_AVAILABLE:
             raise ImportError("Frida is required but not installed")
@@ -64,32 +100,44 @@ class JavaDiscovery:
         self.session: Optional[frida.core.Session] = None
         self.script: Optional[frida.core.Script] = None
 
-        # Obfuscation patterns
+        # 난독화 탐지 패턴
+        # ProGuard, R8, DexGuard 등의 난독화 도구가 생성하는 패턴 매칭
+        # TODO: 더 많은 난독화 패턴 추가 (예: 한글, 특수문자, 난수 패턴)
         self.obfuscation_patterns = [
-            r'^[a-z]$',  # Single letter: a, b, c
-            r'^[a-z]\.[a-z]$',  # Two single letters: a.b
-            r'^[a-z0-9]{1,3}$',  # Short names: ab, o0, l1l
-            r'[O0][O0]',  # O0O, 00O patterns
-            r'[lI1]{2,}',  # l1l, III patterns
+            r'^[a-z]$',  # 단일 문자: a, b, c (ProGuard 기본)
+            r'^[a-z]\.[a-z]$',  # 두 개의 단일 문자: a.b
+            r'^[a-z0-9]{1,3}$',  # 짧은 이름: ab, o0, l1l
+            r'[O0][O0]',  # O0O, 00O 혼동 패턴
+            r'[lI1]{2,}',  # l1l, III 혼동 패턴
         ]
 
     def attach(self, spawn: bool = False) -> bool:
         """
-        Attach to the target process
+        타겟 프로세스에 attach
+
+        동작 방식:
+        - spawn=True: 앱을 새로 실행하고 즉시 attach (초기화 코드 분석 가능)
+        - spawn=False: 실행 중인 앱에 attach (기본값, 더 안정적)
 
         Args:
-            spawn: If True, spawn the app; if False, attach to running process
+            spawn: True면 앱 실행 후 attach, False면 실행 중인 앱에 attach
 
         Returns:
-            bool: True if attached successfully
+            bool: attach 성공 여부
+
+        개선 필요:
+        - TODO: attach 재시도 로직 추가
+        - TODO: 여러 프로세스 중 선택 기능 (멀티프로세스 앱 대응)
         """
         try:
             if spawn:
+                # 앱을 새로 실행하고 일시정지 상태로 attach
                 self.logger.info(f"Spawning {self.package_name}...")
                 pid = self.device.spawn([self.package_name])
                 self.session = self.device.attach(pid)
-                self.device.resume(pid)
+                self.device.resume(pid)  # 일시정지 해제
             else:
+                # 실행 중인 앱에 attach
                 self.logger.info(f"Attaching to {self.package_name}...")
                 self.session = self.device.attach(self.package_name)
 
@@ -117,25 +165,39 @@ class JavaDiscovery:
 
     def _is_obfuscated(self, class_name: str) -> bool:
         """
-        Check if a class name appears to be obfuscated
+        클래스 이름이 난독화되었는지 휴리스틱으로 판단
+
+        탐지 방법:
+        1. 정규식 패턴 매칭 (단일 문자, 짧은 이름, 혼동 패턴)
+        2. 패키지 이름 길이 체크 (매우 짧은 패키지명은 난독화 가능성 높음)
+
+        한계:
+        - 휴리스틱 기반이므로 100% 정확하지 않음
+        - 의도적으로 짧은 이름을 사용하는 경우 오탐 가능
+        - 난독화 도구가 새로운 패턴을 사용하면 탐지 못할 수 있음
 
         Args:
-            class_name: Fully qualified class name
+            class_name: 전체 클래스 이름 (예: com.a.b.C)
 
         Returns:
-            bool: True if likely obfuscated
+            bool: 난독화로 추정되면 True
+
+        개선 필요:
+        - TODO: 머신러닝 기반 난독화 탐지
+        - TODO: 사전 기반 검사 (영어 단어가 있으면 난독화 아님)
+        - TODO: 통계적 분석 (entropy 계산)
         """
-        # Get the simple class name (last part)
+        # 클래스 이름의 마지막 부분만 추출 (단순 클래스명)
         parts = class_name.split('.')
         simple_name = parts[-1] if parts else class_name
 
-        # Check against patterns
+        # 패턴 매칭으로 난독화 확인
         for pattern in self.obfuscation_patterns:
             if re.search(pattern, simple_name):
                 return True
 
-        # Additional heuristics
-        # Very short package names
+        # 추가 휴리스틱: 매우 짧은 패키지 이름들
+        # 예: a.b.c.MyClass → 모든 패키지가 2글자 이하면 난독화 가능성 높음
         if len(parts) > 1 and all(len(p) <= 2 for p in parts[:-1]):
             return True
 
@@ -148,40 +210,52 @@ class JavaDiscovery:
         obfuscated_only: bool = False
     ) -> List[JavaClassInfo]:
         """
-        Enumerate loaded Java classes
+        로드된 Java 클래스 열거
+
+        동작 방식:
+        1. enumerate_classes.js 스크립트를 타겟 프로세스에 주입
+        2. JavaScript에서 Java.enumerateLoadedClasses() 실행
+        3. 모든 로드된 클래스 목록을 Python으로 전송
+        4. 필터링 및 난독화 분석 수행
 
         Args:
-            package_filter: Only include classes from this package (default: target package)
-            include_system: Include system classes (android.*, java.*, etc.)
-            obfuscated_only: Only return obfuscated classes
+            package_filter: 특정 패키지만 포함 (기본값: 타겟 앱 패키지)
+            include_system: 시스템 클래스 포함 여부 (android.*, java.* 등)
+            obfuscated_only: 난독화된 클래스만 반환
 
         Returns:
-            List[JavaClassInfo]: List of discovered classes
+            List[JavaClassInfo]: 발견된 클래스 목록
+
+        개선 필요:
+        - TODO: 고정된 sleep(2) 대신 동적 대기 (스크립트 완료 시그널 사용)
+        - TODO: 점진적 결과 수신 (대량 클래스 처리 시 메모리 효율)
+        - TODO: 에러 발생 시 재시도 로직
         """
         if not self.session:
             raise RuntimeError("Not attached to any process. Call attach() first.")
 
-        # Use target package as default filter
+        # 기본값: 타겟 앱 패키지만 필터링
         if package_filter is None and not include_system:
             package_filter = self.package_name
 
-        # Load enumeration script
+        # Frida 스크립트 로드 (외부 파일 또는 인라인)
         script_path = Path(__file__).parent.parent.parent / "frida_scripts" / "templates" / "enumerate_classes.js"
 
         if script_path.exists():
             with open(script_path, 'r', encoding='utf-8') as f:
                 script_code = f.read()
         else:
-            # Fallback: inline script
+            # 폴백: 인라인 스크립트
             script_code = self._get_enumerate_classes_script()
 
         self.logger.info("Enumerating Java classes...")
 
-        # Execute script
+        # 스크립트 생성 및 실행
         script = self.session.create_script(script_code)
         classes_data = []
 
         def on_message(message, data):
+            """JavaScript에서 전송한 메시지 수신"""
             if message['type'] == 'send':
                 classes_data.append(message['payload'])
             elif message['type'] == 'error':
@@ -190,9 +264,10 @@ class JavaDiscovery:
         script.on('message', on_message)
         script.load()
 
-        # Wait for enumeration to complete
+        # 열거 완료 대기
+        # TODO: 고정 시간 대신 완료 시그널 기반 대기로 개선 필요
         import time
-        time.sleep(2)
+        time.sleep(2)  # FIXME: 클래스 수가 많으면 2초로 부족할 수 있음
 
         script.unload()
 

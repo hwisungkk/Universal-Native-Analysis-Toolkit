@@ -1,7 +1,55 @@
 #!/usr/bin/env python3
 """
-Evasion Manager Module
-Manages anti-detection bypass scripts (Anti-Frida, Anti-Root, Anti-Emulator)
+Evasion Manager Module - 탐지 우회 스크립트 관리 모듈
+
+Anti-Frida, Anti-Root, Anti-Emulator 우회 스크립트를 로드하고 결합합니다.
+
+## 구현 방식:
+1. **개별 스크립트 로드**: frida_scripts/evasion/ 디렉토리에서 우회 스크립트 읽기
+2. **선택적 활성화**: 필요한 우회만 선택적으로 활성화
+3. **스크립트 결합**: 여러 우회 스크립트를 하나로 병합
+4. **캐싱**: 한 번 로드한 스크립트 재사용
+
+## 우회 스크립트 종류:
+### Anti-Frida (anti_frida_bypass.js):
+- Named pipe 탐지 우회 (/dev/socket/linjector)
+- 포트 스캔 우회 (27042, 27043 포트)
+- 라이브러리 이름 체크 우회 (frida-agent, frida-gadget)
+- /proc 파일 시스템 우회
+- strstr/strcmp 후킹 (문자열 비교 조작)
+
+### Anti-Root (anti_root_bypass.js):
+- su 바이너리 체크 우회 (30+ 경로)
+- Magisk/SuperSU 탐지 우회
+- RootBeer 라이브러리 우회
+- Build.TAGS 조작 (test-keys → release-keys)
+- Root 앱 패키지 체크 우회
+
+### Anti-Emulator (anti_emulator_bypass.js):
+- Build 속성 스푸핑 (Samsung Galaxy S21로 위장)
+- IMEI/전화번호 스푸핑
+- 센서 가용성 조작
+- 에뮬레이터 파일 숨김 (qemud, goldfish 등)
+- SystemProperties 조작
+
+## 사용 시나리오:
+```python
+# 모든 우회 활성화
+config = EvasionConfig(anti_frida=True, anti_root=True, anti_emulator=True)
+
+# Frida 탐지만 우회
+config = EvasionConfig(anti_frida=True, anti_root=False, anti_emulator=False)
+
+# 우회 없음 (순수 후킹만)
+config = EvasionConfig(anti_frida=False, anti_root=False, anti_emulator=False)
+```
+
+## 개선 예정:
+- TODO: SSL Pinning 우회 추가
+- TODO: Integrity Check 우회 (앱 변조 탐지)
+- TODO: 안티 디버깅 우회 (ptrace, TracerPid 등)
+- TODO: Obfuscation 우회 (난독화 해제)
+- TODO: 커스텀 우회 스크립트 지원
 """
 
 import logging
@@ -12,7 +60,26 @@ from dataclasses import dataclass
 
 @dataclass
 class EvasionConfig:
-    """Configuration for evasion bypasses"""
+    """
+    우회 설정을 저장하는 데이터 클래스
+
+    Attributes:
+        anti_frida: Frida 탐지 우회 활성화 (기본: True)
+        anti_root: Root 탐지 우회 활성화 (기본: True)
+        anti_emulator: 에뮬레이터 탐지 우회 활성화 (기본: True)
+
+    ## 사용 예시:
+    ```python
+    # 모든 우회 활성화 (기본)
+    config = EvasionConfig()
+
+    # Frida만 우회
+    config = EvasionConfig(anti_frida=True, anti_root=False, anti_emulator=False)
+
+    # 우회 없음 (순수 분석)
+    config = EvasionConfig(anti_frida=False, anti_root=False, anti_emulator=False)
+    ```
+    """
     anti_frida: bool = True
     anti_root: bool = True
     anti_emulator: bool = True
@@ -20,8 +87,36 @@ class EvasionConfig:
 
 class EvasionManager:
     """
-    Manages evasion bypass scripts
-    Loads and combines anti-detection scripts
+    우회 스크립트 관리자
+
+    ## 주요 기능:
+    1. **스크립트 로드**: .js 우회 스크립트 읽기 및 캐싱
+    2. **스크립트 결합**: 여러 우회 스크립트를 하나로 병합
+    3. **선택적 활성화**: 설정에 따라 필요한 우회만 포함
+
+    ## 스크립트 결합 방식:
+    각 우회 스크립트를 구분선으로 구분하여 연결
+    ```javascript
+    // Anti-Frida 코드...
+
+    // ==========================================
+
+    // Anti-Root 코드...
+
+    // ==========================================
+
+    // Anti-Emulator 코드...
+    ```
+
+    ## 로드 순서:
+    1. Anti-Frida (가장 먼저 실행되어야 함)
+    2. Anti-Root
+    3. Anti-Emulator
+
+    ## TODO:
+    - 우회 스크립트 우선순위 설정
+    - 조건부 우회 (특정 상황에서만 활성화)
+    - 우회 성공/실패 로깅
     """
 
     SCRIPT_DIR = Path(__file__).parent.parent.parent / "frida_scripts" / "evasion"
