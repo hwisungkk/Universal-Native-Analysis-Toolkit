@@ -227,108 +227,207 @@ def install(ctx, apk_path, serial, reinstall):
 
 
 @cli.command()
-@click.argument('package_name')
+@click.argument('package_name', required=False)
+@click.option('--apk', type=click.Path(exists=True), help='APK file for native discovery')
 @click.option('-s', '--serial', help='Specific device serial')
 @click.option('--spawn', is_flag=True, help='Spawn the app instead of attaching')
 @click.option('--package-only', is_flag=True, default=True, help='Only enumerate app package classes (default)')
 @click.option('--filter-obfuscated', is_flag=True, help='Only show obfuscated classes')
 @click.option('--no-methods', is_flag=True, help='Skip method enumeration (faster)')
+@click.option('--no-strings', is_flag=True, help='Skip string extraction (native discovery only)')
 @click.option('-o', '--output', help='Output file (JSON format)')
 @click.option('--max-classes', type=int, help='Maximum number of classes to process')
+@click.option('--max-libs', type=int, help='Maximum number of libraries to process (native discovery only)')
 @click.pass_context
-def discover(ctx, package_name, serial, spawn, package_only, filter_obfuscated, no_methods, output, max_classes):
+def discover(ctx, package_name, apk, serial, spawn, package_only, filter_obfuscated, no_methods, no_strings, output, max_classes, max_libs):
     """
-    Discover Java classes and methods in a running application
+    Discover Java classes/methods or native libraries
 
-    Uses Frida to dynamically enumerate loaded Java classes and their methods.
-    Useful for understanding app structure and finding obfuscated code.
+    Java Discovery (default):
+        Uses Frida to dynamically enumerate loaded Java classes and their methods.
+        Requires a running app and device connection.
 
-    Example:
-        unat discover com.example.app
-        unat discover com.example.app --filter-obfuscated
-        unat discover com.example.app --spawn --no-methods
+        Examples:
+            unat discover com.example.app
+            unat discover com.example.app --filter-obfuscated
+            unat discover com.example.app --spawn --no-methods
+
+    Native Discovery:
+        Analyzes native libraries (.so files) in an APK statically.
+        Extracts exported/imported functions, strings, and security features.
+
+        Examples:
+            unat discover --apk app.apk
+            unat discover --apk app.apk --no-strings
+            unat discover --apk app.apk -o native_analysis.json
     """
     try:
-        from unat.core.device_manager import DeviceManager
-        from unat.discovery.java_discovery import discover_java_classes
+        # Check if native discovery mode
+        if apk:
+            # Native Discovery mode
+            from unat.discovery.native_discovery import discover_native_libraries
 
-        if RICH_AVAILABLE:
-            console.print(f"\n[bold]Java Discovery:[/bold] {package_name}\n")
+            if RICH_AVAILABLE:
+                console.print(f"\n[bold]Native Discovery:[/bold] {apk}\n")
+            else:
+                print(f"\nNative Discovery: {apk}\n")
+
+            # Perform native discovery
+            if RICH_AVAILABLE:
+                console.print("[yellow]Analyzing native libraries...[/yellow]")
+            else:
+                print("Analyzing native libraries...")
+
+            result = discover_native_libraries(
+                apk_path=apk,
+                extract_strings=not no_strings,
+                min_string_length=4
+            )
+
+            if not result:
+                if RICH_AVAILABLE:
+                    console.print("[bold red]Native discovery failed[/bold red]")
+                else:
+                    print("Native discovery failed")
+                sys.exit(1)
+
+            # Display results
+            if RICH_AVAILABLE:
+                _display_native_discovery_results_rich(result, max_libs)
+            else:
+                _display_native_discovery_results_plain(result, max_libs)
+
+            # Save to file if requested
+            if output:
+                import json
+                output_data = {
+                    'apk_path': result.apk_path,
+                    'total_libraries': result.total_libraries,
+                    'total_exported_functions': result.total_exported_functions,
+                    'total_imported_functions': result.total_imported_functions,
+                    'total_strings': result.total_strings,
+                    'libraries': [
+                        {
+                            'path': lib.path,
+                            'architecture': lib.architecture,
+                            'bit_width': lib.bit_width,
+                            'endianness': lib.endianness,
+                            'security': {
+                                'pie': lib.has_pie,
+                                'nx': lib.has_nx,
+                                'canary': lib.has_canary,
+                                'relro': lib.has_relro
+                            },
+                            'exported_functions': [
+                                {'name': f.name, 'address': hex(f.address), 'size': f.size}
+                                for f in lib.exported_functions[:100]  # Limit in JSON
+                            ],
+                            'imported_functions': lib.imported_functions[:100],
+                            'dependencies': lib.dependencies,
+                            'strings': lib.strings[:100] if lib.strings else []
+                        }
+                        for lib in (result.libraries[:max_libs] if max_libs else result.libraries)
+                    ]
+                }
+
+                with open(output, 'w', encoding='utf-8') as f:
+                    json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+                if RICH_AVAILABLE:
+                    console.print(f"\n[green]Results saved to:[/green] {output}")
+                else:
+                    print(f"\nResults saved to: {output}")
+
         else:
-            print(f"\nJava Discovery: {package_name}\n")
+            # Java Discovery mode (default)
+            from unat.core.device_manager import DeviceManager
+            from unat.discovery.java_discovery import discover_java_classes
 
-        # Connect to device
-        manager = DeviceManager()
-        if not manager.connect(serial):
-            if RICH_AVAILABLE:
-                console.print("[bold red]Failed to connect to device[/bold red]")
-            else:
-                print("Failed to connect to device")
-            sys.exit(1)
-
-        # Get Frida device
-        frida_device = manager.get_frida_device()
-        if not frida_device:
-            if RICH_AVAILABLE:
-                console.print("[bold red]Frida not available on device[/bold red]")
-            else:
-                print("Frida not available on device")
-            sys.exit(1)
-
-        # Perform discovery
-        if RICH_AVAILABLE:
-            console.print("[yellow]Starting discovery...[/yellow]")
-        else:
-            print("Starting discovery...")
-
-        result = discover_java_classes(
-            frida_device=frida_device,
-            package_name=package_name,
-            spawn=spawn,
-            package_only=package_only,
-            obfuscated_only=filter_obfuscated,
-            enumerate_methods=not no_methods
-        )
-
-        if not result:
-            if RICH_AVAILABLE:
-                console.print("[bold red]Discovery failed[/bold red]")
-            else:
-                print("Discovery failed")
-            sys.exit(1)
-
-        # Display results
-        if RICH_AVAILABLE:
-            _display_discovery_results_rich(result, max_classes)
-        else:
-            _display_discovery_results_plain(result, max_classes)
-
-        # Save to file if requested
-        if output:
-            import json
-            output_data = {
-                'package_name': result.package_name,
-                'total_classes': result.total_classes,
-                'total_methods': result.total_methods,
-                'obfuscated_classes': result.obfuscated_classes,
-                'classes': [
-                    {
-                        'name': c.name,
-                        'package': c.package,
-                        'is_obfuscated': c.is_obfuscated,
-                        'methods': c.methods[:10] if c.methods else []  # Limit methods in JSON
-                    }
-                    for c in (result.classes[:max_classes] if max_classes else result.classes)
-                ]
-            }
-
-            with open(output, 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, indent=2, ensure_ascii=False)
+            if not package_name:
+                if RICH_AVAILABLE:
+                    console.print("[bold red]Error:[/bold red] package_name is required for Java discovery")
+                else:
+                    print("Error: package_name is required for Java discovery")
+                console.print("\nUse --apk for native discovery, or provide package_name for Java discovery")
+                sys.exit(1)
 
             if RICH_AVAILABLE:
-                console.print(f"\n[green]Results saved to:[/green] {output}")
+                console.print(f"\n[bold]Java Discovery:[/bold] {package_name}\n")
             else:
-                print(f"\nResults saved to: {output}")
+                print(f"\nJava Discovery: {package_name}\n")
+
+            # Connect to device
+            manager = DeviceManager()
+            if not manager.connect(serial):
+                if RICH_AVAILABLE:
+                    console.print("[bold red]Failed to connect to device[/bold red]")
+                else:
+                    print("Failed to connect to device")
+                sys.exit(1)
+
+            # Get Frida device
+            frida_device = manager.get_frida_device()
+            if not frida_device:
+                if RICH_AVAILABLE:
+                    console.print("[bold red]Frida not available on device[/bold red]")
+                else:
+                    print("Frida not available on device")
+                sys.exit(1)
+
+            # Perform discovery
+            if RICH_AVAILABLE:
+                console.print("[yellow]Starting discovery...[/yellow]")
+            else:
+                print("Starting discovery...")
+
+            result = discover_java_classes(
+                frida_device=frida_device,
+                package_name=package_name,
+                spawn=spawn,
+                package_only=package_only,
+                obfuscated_only=filter_obfuscated,
+                enumerate_methods=not no_methods
+            )
+
+            if not result:
+                if RICH_AVAILABLE:
+                    console.print("[bold red]Discovery failed[/bold red]")
+                else:
+                    print("Discovery failed")
+                sys.exit(1)
+
+            # Display results
+            if RICH_AVAILABLE:
+                _display_discovery_results_rich(result, max_classes)
+            else:
+                _display_discovery_results_plain(result, max_classes)
+
+            # Save to file if requested
+            if output:
+                import json
+                output_data = {
+                    'package_name': result.package_name,
+                    'total_classes': result.total_classes,
+                    'total_methods': result.total_methods,
+                    'obfuscated_classes': result.obfuscated_classes,
+                    'classes': [
+                        {
+                            'name': c.name,
+                            'package': c.package,
+                            'is_obfuscated': c.is_obfuscated,
+                            'methods': c.methods[:10] if c.methods else []  # Limit methods in JSON
+                        }
+                        for c in (result.classes[:max_classes] if max_classes else result.classes)
+                    ]
+                }
+
+                with open(output, 'w', encoding='utf-8') as f:
+                    json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+                if RICH_AVAILABLE:
+                    console.print(f"\n[green]Results saved to:[/green] {output}")
+                else:
+                    print(f"\nResults saved to: {output}")
 
     except Exception as e:
         if RICH_AVAILABLE:
@@ -400,6 +499,148 @@ def _display_discovery_results_plain(result, max_classes=None):
         obf_marker = " [OBFUSCATED]" if class_info.is_obfuscated else ""
         method_count = len(class_info.methods) if class_info.methods else 0
         print(f"{class_info.name} ({method_count} methods){obf_marker}")
+
+
+def _display_native_discovery_results_rich(result, max_libs=None):
+    """Display native discovery results using Rich formatting"""
+    # Summary panel
+    summary = f"""[cyan]APK:[/cyan] {result.apk_path}
+[cyan]Total Libraries:[/cyan] {result.total_libraries}
+[cyan]Total Exported Functions:[/cyan] {result.total_exported_functions}
+[cyan]Total Imported Functions:[/cyan] {result.total_imported_functions}
+[cyan]Total Strings:[/cyan] {result.total_strings}"""
+
+    console.print(Panel(summary, title="[bold]Native Discovery Summary[/bold]", border_style="green"))
+
+    # Libraries overview
+    libs_to_show = result.libraries[:max_libs] if max_libs else result.libraries
+
+    if libs_to_show:
+        for lib in libs_to_show:
+            # Library header
+            lib_name = Path(lib.path).name
+            lib_title = f"[bold cyan]{lib_name}[/bold cyan] ({lib.architecture}, {lib.bit_width}-bit)"
+            console.print(f"\n{lib_title}")
+
+            # Security features
+            security_markers = []
+            if lib.has_pie:
+                security_markers.append("[green]PIE[/green]")
+            else:
+                security_markers.append("[red]No PIE[/red]")
+
+            if lib.has_nx:
+                security_markers.append("[green]NX[/green]")
+            else:
+                security_markers.append("[red]No NX[/red]")
+
+            if lib.has_canary:
+                security_markers.append("[green]Canary[/green]")
+            else:
+                security_markers.append("[red]No Canary[/red]")
+
+            if lib.has_relro:
+                security_markers.append("[green]RELRO[/green]")
+            else:
+                security_markers.append("[red]No RELRO[/red]")
+
+            console.print(f"  Security: {' | '.join(security_markers)}")
+
+            # Stats table
+            stats_table = Table(show_header=False, box=None, padding=(0, 2))
+            stats_table.add_column("Label", style="yellow")
+            stats_table.add_column("Value", style="cyan")
+
+            stats_table.add_row("Exported Functions:", str(len(lib.exported_functions)))
+            stats_table.add_row("Imported Functions:", str(len(lib.imported_functions)))
+            stats_table.add_row("Dependencies:", str(len(lib.dependencies)))
+            if lib.strings:
+                stats_table.add_row("Strings:", str(len(lib.strings)))
+
+            console.print(stats_table)
+
+            # Show some exported functions
+            if lib.exported_functions:
+                console.print(f"\n  [bold yellow]Exported Functions (top 10):[/bold yellow]")
+                for func in lib.exported_functions[:10]:
+                    addr_str = f"0x{func.address:08x}"
+                    console.print(f"    {addr_str}  {func.name}")
+
+            # Show dependencies
+            if lib.dependencies:
+                console.print(f"\n  [bold yellow]Dependencies:[/bold yellow]")
+                for dep in lib.dependencies[:5]:
+                    console.print(f"    • {dep}")
+                if len(lib.dependencies) > 5:
+                    console.print(f"    ... and {len(lib.dependencies) - 5} more")
+
+            # Show some strings
+            if lib.strings:
+                console.print(f"\n  [bold yellow]Interesting Strings (sample):[/bold yellow]")
+                interesting_strings = [
+                    s for s in lib.strings
+                    if any(keyword in s.lower() for keyword in ['http', 'key', 'password', 'token', 'api', 'secret'])
+                ][:10]
+
+                if interesting_strings:
+                    for s in interesting_strings:
+                        preview = s[:80] + "..." if len(s) > 80 else s
+                        console.print(f"    • {preview}")
+                else:
+                    for s in lib.strings[:5]:
+                        preview = s[:80] + "..." if len(s) > 80 else s
+                        console.print(f"    • {preview}")
+
+            console.print("")  # Empty line between libraries
+
+
+def _display_native_discovery_results_plain(result, max_libs=None):
+    """Display native discovery results in plain text"""
+    print("\n=== Native Discovery Summary ===")
+    print(f"APK: {result.apk_path}")
+    print(f"Total Libraries: {result.total_libraries}")
+    print(f"Total Exported Functions: {result.total_exported_functions}")
+    print(f"Total Imported Functions: {result.total_imported_functions}")
+    print(f"Total Strings: {result.total_strings}")
+
+    libs_to_show = result.libraries[:max_libs] if max_libs else result.libraries
+
+    print(f"\n=== Libraries (showing {len(libs_to_show)} of {result.total_libraries}) ===")
+    for lib in libs_to_show:
+        lib_name = Path(lib.path).name
+        print(f"\n{lib_name} ({lib.architecture}, {lib.bit_width}-bit)")
+
+        # Security features
+        security = []
+        if lib.has_pie:
+            security.append("PIE")
+        if lib.has_nx:
+            security.append("NX")
+        if lib.has_canary:
+            security.append("Canary")
+        if lib.has_relro:
+            security.append("RELRO")
+
+        print(f"  Security: {', '.join(security) if security else 'None'}")
+        print(f"  Exported Functions: {len(lib.exported_functions)}")
+        print(f"  Imported Functions: {len(lib.imported_functions)}")
+        print(f"  Dependencies: {len(lib.dependencies)}")
+        if lib.strings:
+            print(f"  Strings: {len(lib.strings)}")
+
+        # Show some exported functions
+        if lib.exported_functions:
+            print(f"\n  Top Exported Functions:")
+            for func in lib.exported_functions[:10]:
+                print(f"    0x{func.address:08x}  {func.name}")
+
+        # Show dependencies
+        if lib.dependencies:
+            print(f"\n  Dependencies:")
+            for dep in lib.dependencies[:5]:
+                print(f"    • {dep}")
+            if len(lib.dependencies) > 5:
+                print(f"    ... and {len(lib.dependencies) - 5} more")
 
 
 def _display_apk_info_rich(info, handler):
