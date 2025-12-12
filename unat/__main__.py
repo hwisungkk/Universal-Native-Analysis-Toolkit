@@ -735,10 +735,15 @@ def _display_device_info_rich(manager):
 @click.option('--no-return', is_flag=True, help='Disable return value logging')
 @click.option('--backtrace', is_flag=True, help='Enable backtrace logging')
 @click.option('--registers', is_flag=True, help='Enable register logging (native only)')
+@click.option('--bypass-all', is_flag=True, default=True, help='Enable all detection bypasses (default)')
+@click.option('--no-bypass', is_flag=True, help='Disable all detection bypasses')
+@click.option('--anti-frida', is_flag=True, help='Enable Anti-Frida bypass only')
+@click.option('--anti-root', is_flag=True, help='Enable Anti-Root bypass only')
+@click.option('--anti-emulator', is_flag=True, help='Enable Anti-Emulator bypass only')
 @click.option('-d', '--duration', type=int, help='Hook duration in seconds (default: indefinite)')
 @click.option('-o', '--output', help='Output file for hook logs (JSON format)')
 @click.pass_context
-def hook(ctx, package_name, serial, spawn, method, native, module, template, no_args, no_return, backtrace, registers, duration, output):
+def hook(ctx, package_name, serial, spawn, method, native, module, template, no_args, no_return, backtrace, registers, bypass_all, no_bypass, anti_frida, anti_root, anti_emulator, duration, output):
     """
     Hook Java methods or native functions in a running application
 
@@ -785,6 +790,7 @@ def hook(ctx, package_name, serial, spawn, method, native, module, template, no_
             HookConfig,
             HookEvent
         )
+        from unat.evasion import EvasionManager, EvasionConfig
 
         # Validate input
         if not method and not native and not template:
@@ -906,7 +912,62 @@ def hook(ctx, package_name, serial, spawn, method, native, module, template, no_
                 print("Failed to generate hook script")
             sys.exit(1)
 
-        # Load script
+        # Determine evasion configuration
+        evasion_enabled = not no_bypass
+
+        if evasion_enabled:
+            # Determine which bypasses to enable
+            if anti_frida or anti_root or anti_emulator:
+                # Specific bypasses requested
+                evasion_config = EvasionConfig(
+                    anti_frida=anti_frida,
+                    anti_root=anti_root,
+                    anti_emulator=anti_emulator
+                )
+            else:
+                # Default: enable all if --bypass-all (default)
+                evasion_config = EvasionConfig(
+                    anti_frida=True,
+                    anti_root=True,
+                    anti_emulator=True
+                )
+
+            # Generate and load evasion script
+            evasion_mgr = EvasionManager()
+            evasion_script = evasion_mgr.generate_combined_script(evasion_config)
+
+            if evasion_script:
+                if RICH_AVAILABLE:
+                    bypasses = []
+                    if evasion_config.anti_frida:
+                        bypasses.append("[cyan]Anti-Frida[/cyan]")
+                    if evasion_config.anti_root:
+                        bypasses.append("[cyan]Anti-Root[/cyan]")
+                    if evasion_config.anti_emulator:
+                        bypasses.append("[cyan]Anti-Emulator[/cyan]")
+                    console.print(f"[yellow]Evasion bypasses:[/yellow] {', '.join(bypasses)}")
+                else:
+                    bypasses = []
+                    if evasion_config.anti_frida:
+                        bypasses.append("Anti-Frida")
+                    if evasion_config.anti_root:
+                        bypasses.append("Anti-Root")
+                    if evasion_config.anti_emulator:
+                        bypasses.append("Anti-Emulator")
+                    print(f"Evasion bypasses: {', '.join(bypasses)}")
+
+                if not engine.load_script(evasion_script, "evasion"):
+                    if RICH_AVAILABLE:
+                        console.print("[yellow]Warning:[/yellow] Failed to load evasion script")
+                    else:
+                        print("Warning: Failed to load evasion script")
+        else:
+            if RICH_AVAILABLE:
+                console.print("[yellow]Evasion bypasses disabled[/yellow]")
+            else:
+                print("Evasion bypasses disabled")
+
+        # Load main hook script
         if not engine.load_script(script_code, "main_hook"):
             if RICH_AVAILABLE:
                 console.print("[bold red]Failed to load hook script[/bold red]")
