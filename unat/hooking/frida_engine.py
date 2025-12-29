@@ -156,8 +156,44 @@ class FridaEngine:
                 self.session = self.device.attach(pid)
                 self.device.resume(pid)
             else:
-                self.logger.info(f"Attaching to {self.package_name}...")
-                self.session = self.device.attach(self.package_name)
+                self.logger.info(f"Attaching to {self.package_name}.")
+
+                target = self.package_name.strip()
+                
+                # 1) 숫자면 PID로 attach (문자열 "1234"도 PID로 취급)
+                if isinstance(target, str) and target.isdigit():
+                    target_pid = int(target)
+                    self.session = self.device.attach(target_pid)
+
+                else:
+                    # 2) 먼저 "이름 그대로" 매칭되는 프로세스가 있으면 그 PID로 attach
+                    try:
+                        procs = self.device.enumerate_processes()
+                    except Exception:
+                        procs = []
+
+                    exact = [p for p in procs if p.name == target]
+                    prefix = [p for p in procs if isinstance(target, str) and p.name.startswith(target + ":")]
+                    starts = [p for p in procs if isinstance(target, str) and p.name.startswith(target)]
+
+                    candidates = exact or prefix or starts
+
+                    if candidates:
+                     
+                        best = None
+                        for p in candidates:
+                            if ":" not in p.name:
+                                best = p
+                                break
+                        if best is None:
+                            best = candidates[0]
+
+                        self.logger.info(f"Resolved attach target: pid={best.pid} name={best.name}")
+                        self.session = self.device.attach(best.pid)
+                    else:
+                        # 3) 마지막 fallback: 프리다 내부 매칭에 맡김(기존 동작)
+                        self.session = self.device.attach(target)
+
 
             self.logger.info("Attached successfully")
             self.stats['start_time'] = datetime.now()

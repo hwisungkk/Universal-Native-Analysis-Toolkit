@@ -281,11 +281,35 @@ class HookTemplateManager:
             'ARG_COUNT': str(config.arg_count)
         }
 
+        
         script = template
         for var, value in replacements.items():
             script = script.replace(var, value)
 
+        # ✅ spawn에서도 안정적으로: 모듈이 로드될 때까지 기다렸다가 설치
+        if config.module_name:
+            script = f"""
+(function () {{
+  var __unat_mod = {module_value};
+
+  function __unat_install() {{
+{script}
+  }}
+
+  function __unat_wait() {{
+    if (__unat_mod === null || Process.findModuleByName(__unat_mod) !== null) {{
+      __unat_install();
+      return;
+    }}
+    setTimeout(__unat_wait, 50);
+  }}
+
+  __unat_wait();
+}})();
+"""
+
         return script
+
 
     def generate_hook(self, hook_type: str, config: HookConfig) -> Optional[str]:
         """
