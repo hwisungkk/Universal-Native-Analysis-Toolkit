@@ -18,7 +18,11 @@
       "Bash(git commit:*)",
       "Bash(git add:*)",
       "Bash(python -m unat:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(python:*)",
+      "Bash(venv/Scripts/python.exe:*)",
+      "Bash(python3:*)",
+      "Bash(pip show:*)"
     ]
   }
 }

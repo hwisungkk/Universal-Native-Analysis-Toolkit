@@ -132,7 +132,23 @@ class APKHandler:
         info.dex_files = self.apk.get_dex_names() or []
 
         # Security flags
-        info.is_debuggable = self.apk.is_debuggable()
+        # Check debuggable flag with compatibility for different androguard versions
+        try:
+            # Try new method first (androguard 4.x)
+            info.is_debuggable = self.apk.is_debuggable()
+        except AttributeError:
+            # Fallback: parse from manifest for newer versions
+            try:
+                manifest = self.apk.get_android_manifest_axml()
+                app_element = manifest.get_element("application")
+                if app_element:
+                    debuggable = app_element.get('{http://schemas.android.com/apk/res/android}debuggable')
+                    info.is_debuggable = debuggable == 'true' if debuggable else False
+                else:
+                    info.is_debuggable = False
+            except Exception as e:
+                self.logger.warning(f"Could not determine debuggable flag: {e}")
+                info.is_debuggable = False
 
         self.info = info
         self.logger.info(f"Extracted info for package: {info.package_name}")
