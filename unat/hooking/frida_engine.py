@@ -160,7 +160,7 @@ class FridaEngine:
 
                 target = self.package_name.strip()
                 
-                # 1) 숫자면 PID로 attach (문자열 "1234"도 PID로 취급)
+                # 1) 숫자로 입력받으면 PID로 attach
                 if isinstance(target, str) and target.isdigit():
                     target_pid = int(target)
                     self.session = self.device.attach(target_pid)

@@ -286,7 +286,7 @@ class HookTemplateManager:
         for var, value in replacements.items():
             script = script.replace(var, value)
 
-        # ✅ spawn에서도 안정적으로: 모듈이 로드될 때까지 기다렸다가 설치
+        # spawn에서 입력한 module이 로드될 때까지 기다렸다가 후킹
         if config.module_name:
             script = f"""
 (function () {{
